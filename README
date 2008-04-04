@@ -1,0 +1,35 @@
+Template::Perlish version 1.0
+
+Template::Perlish is Yet Another Templating system for Perl. Its goal
+is to be tiny but retain the full power of Perl for most challenging
+situations.
+
+
+INSTALLATION
+
+To install this module, run the following commands:
+
+	perl Makefile.PL
+	make
+	make test
+	make install
+
+Alternatively, to install with Module::Build, you can use the following commands:
+
+	perl Build.PL
+	./Build
+	./Build test
+	./Build install
+
+
+DEPENDENCIES
+
+None.
+
+
+COPYRIGHT AND LICENCE
+
+Copyright (C) 2008, Flavio Poletti
+
+This library is free software; you can redistribute it and/or modify
+it under the same terms as Perl itself.
