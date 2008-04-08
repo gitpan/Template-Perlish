@@ -1,7 +1,8 @@
 package Template::Perlish;
 
-$VERSION = '1.0';
+$VERSION = '1.01';
 
+use 5.008_000;
 use warnings;
 use strict;
 use Carp;
@@ -19,49 +20,10 @@ sub new {
    return $self;
 } ## end sub new
 
-sub get_start { return shift->{start}; }
-
-sub set_start {
-   my ($self, $value) = @_;
-   $self->{start} = $value;
-   return;
-}
-
-sub get_stop { return shift->{stop}; }
-
-sub set_stop {
-   my ($self, $value) = @_;
-   $self->{stop} = $value;
-   return;
-}
-
-sub get_variables {
-   my $v = shift->{variables};
-   return $v unless wantarray;
-   return %$v;
-}
-
-sub set_variables {
-   my $self = shift;
-   if (@_ == 1) {
-      $self->{variables} = shift;
-   }
-   else {
-      %{$self->{variables}} = @_;
-   }
-   return;
-}
-
-sub set_variable {
-   my ($self, $name, $value) = @_;
-   $self->get_variables()->{$name} = $value;
-   return;
-}
-
 sub process {
    my ($self, $template, $vars) = @_;
    return $self->evaluate($self->compile($template), $vars);
-} ## end sub process
+}
 
 sub evaluate {
    my $self = shift;
@@ -69,17 +31,17 @@ sub evaluate {
 
    local *STDOUT;
    open STDOUT, '>', \my $buffer or croak "open(): $OS_ERROR";
-   my %variables = ($self->get_variables(), %{$vars || {}});
+   my %variables = (%{$self->{variables}}, %{$vars || {}});
    eval $compiled;
    return $buffer;
-}
+} ## end sub evaluate
 
 sub compile {
    my $self = shift;
    my ($template) = @_;
 
-   my $starter = $self->get_start();
-   my $stopper = $self->get_stop();
+   my $starter = $self->{start};
+   my $stopper = $self->{stop};
 
    my $compiled = "print {*STDOUT} '';\n\n";
    my $pos      = 0;
@@ -102,28 +64,46 @@ sub compile {
       if ($code =~ m{\A\s* \w+(?:\.\w+)* \s*\z}mxs) {
          $compiled .= _variable($code);
       }
+      elsif (my ($scalar) = $code =~ m{\A\s* (\$ [a-zA-Z_]\w*) \s*\z}mxs) {
+         $compiled .= "\nprint {*STDOUT} $scalar; ### straight scalar\n\n";
+      }
       else {
          $compiled .= $code;
       }
+
    } ## end while ($pos < length $template)
    $compiled .= _simple_text(substr($template, $pos || 0));
 
    return $compiled;
 } ## end sub compile
 
+sub compile_as_sub {
+   my $self     = shift;
+   my $raw_code = $self->compile(@_);
+   return eval <<"END_OF_CODE";
+sub {
+   my \%variables = (\%{\$self->{variables}}, \%{shift || {}});
+   local *STDOUT;
+   open STDOUT, '>', \\my \$buffer or croak "open(): \$OS_ERROR";
+   { # closure to "free" the buffer
+$raw_code
+   }
+   return \$buffer;
+}
+END_OF_CODE
+} ## end sub compile_as_sub
+
 sub _simple_text {
    my $text = shift;
-   $text =~ s/^/ /gms;
+   $text =~ s/^/ /gms; # indent, trick taken from diff -u
    return <<"END_OF_CHUNK";
-####################################################
-###
 ### Verbatim text
 print {*STDOUT} do {
    my \$text = <<'END_OF_INDENTED_TEXT';
 $text
 END_OF_INDENTED_TEXT
-   \$text =~ s/^ //gms;
-   substr \$text, -1, 1, '';
+   \$text =~ s/^ //gms;      # de-indent
+   substr \$text, -1, 1, ''; # get rid of added newline
    \$text;
 };
 
@@ -134,9 +114,7 @@ sub _variable {
    my $path = shift;
    $path =~ s/\A\s+|\s+\z//mxsg;
    return <<"END_OF_CHUNK";
-####################################################
-###
-### Find path inside variables stash
+### Variable from \%variables stash
 {
    my \$value = \\\%variables;
    for my \$chunk (split /\\./, '$path') {
@@ -185,8 +163,10 @@ version number here is outdate, and you should peek the source.
       we are pleased to present you the following items:
    [%
       my $items = $variables{items}; # Available %variables
-      for my $item (@$items) {%]
-      * [% print $item;
+      for my $item (@$items) {
+   %]
+      * [% $item %]
+   [%
       }
    %]
 
@@ -249,7 +229,7 @@ I<command>, and treated specially. All the rest is treated as simple
 text. Of course, you can modify the start and stop delimiter for a
 command.
 
-I<Commands> can be of two different types:
+I<Commands> can be of three different types:
 
 =over
 
@@ -261,6 +241,10 @@ as a sequence of alphanumeric (actually C<\w>) tokens, separated by dots.
 The variables hash is visited considering each token as a subkey, in order
 to let you visit complex data structures. You can also put arrays in, but
 remember to use numbers ;)
+
+=item B<scalar Perl variable>
+
+that is expanded with the value of the given scalar variable
 
 =item B<code>
 
@@ -301,13 +285,30 @@ on the same template many times, a typical usage is:
 
    # use the compiled template multiple times with different data
    for my $dataset (@available_data) {
-      print {*STDOUT} "DATASET\n", $tp->evaluate($dataset), "\n\n";
+      print {*STDOUT} "DATASET\n", $tp->evaluate($compiled, $dataset), "\n\n";
    }
 
+Anyway, there's a drawback in this approach: each time L<evaluate()> is
+called, the code in the string C<$compiled> is C<exec>'ed as a string,
+thus involving Perl parsing etc. In this case, the L<compile_as_sub()>
+method can come handy:
+
+   my $sub = $tp->compile_as_sub($template);
+   for my $dataset (@available_data) {
+      print {*STDOUT} "DATASET\n", $sub->($dataset), "\n\n";
+   }
+
+This has the advantage that C<$sub> is compiled only once, and is a
+Perl subroutine that can be invoked directly. As an added bonus, you get
+immediate feedback about the generated code, because you'll get back
+C<undef> if something goes wrong during parsing. On the other hand, this
+means that the Perl code is always executed (to generate the sub), thus
+you have to endure this penalty even if the compiled form isn't actually
+needed.
 
 =head1 INTERFACE 
 
-=head2 Constructor and Accessors
+=head2 Constructor
 
 =over
 
@@ -340,34 +341,8 @@ Parameters can be given directly or via a hash reference.
 By default, the delimiters are the same as TT2, i.e. C<[%> and C<%]>, and
 the variables hash is empty.
 
-=item B<< get_start(), set_start($value) >>
-
-=item B<< get_stop(), set_stop($value) >>
-
-accessors for the delimiters (see L<new()>).
-
-
-=item B<< get_variables() >>
-
-get the configured variables. These variables will be available to all
-invocations of either C<process()> or C<evaluate()>.
-
-When called in scalar context returns a reference to the hash containing
-the variables. You can set variables directly on the hash. In list
-context the whole hash will be returned (as a shallow copy).
-
-=item B<< set_variables(%new_values) >>
-
-=item B<< set_variables(\%new_values) >>
-
-set variables common to all subsequent invocations. You can pass either
-the new contents for the hash, or a reference to the hash to be used.
-
-
-=item B<< set_variable($name, $value) >>
-
-set a single variable's value, among the variables that are passed to
-all invocations.
+The return value is a reference to an anonymous hash, whose three
+elements are the ones described above. You can modify them at will.
 
 =back
 
@@ -386,9 +361,30 @@ use it, of course.
 
 Returns a text containing Perl code.
 
+=item B<< compile_as_sub($template)  >>
+
+Much like L<compile()>, this method does exactly the same compilation,
+but returns a reference to an anonymous subroutine that can be used
+each time you want to "explode" the template. This has the advantage
+that you immediately know if your template compiles good (otherwise
+you will get undef) and that each following template explosion will
+not require any Perl code compilation. On the other hand, you'll have
+to endure the code compilation immediately, which could be bad for
+you if you don't end up using it.
+
+The anonymous sub that is returned accepts a single, optional parameter,
+namely a reference to a hash of variables to be used in addition to the
+"streamline" ones.
+
+Note that if you add/change/remove values using the C<variables> accessor
+of the Template::Perlish object, these changes will reflect on the
+anonymous sub, so you end up using different values in two subsequent
+invocations of the sub. This is consistent with the behaviuor of the
+L<evaluate()> method.
+
 =item B<< evaluate($compiled) >>
 
-=item B<< evaluate($compiled, $variables) >>
+=item B<< evaluate($compiled, \%variables) >>
 
 evaluate a template (in its compiled for, see L<compile()>) with the
 available variables. In the former form, only the already configured
@@ -407,10 +403,17 @@ this method included L<compile()> and L<evaluate()> into a single step.
 
 =head2 Templates
 
-There's really very little to say.
+There's really very little to say: write your document/text/whatever, and
+embed special parts with the delimiters of your choice (or stick to the
+defaults). If you have to print stuff, just print to STDOUT, it will
+be automatically catpured (unless you're calling the generated
+code by yourself).
 
-Available variables can be accessed in two ways: using the dotted notation,
-as in
+Anything inside these "special" parts matching the regular 
+expression /^\s*\w+(?:\.\w+)*\s*$/, i.e. consisting only of a sequence
+of alphanumeric tokens separated by dots, are considered to be variables
+and processed accordingly. Thus, available variables can be accessed 
+in two ways: using the dotted notation, as in
 
    [% some.value.3.lastkey %]
 
@@ -419,6 +422,17 @@ or explicitly using the C<%variables> hash:
    [% print $variables{some}{value}[3]{lastkey} %]
 
 The former is cleaner, but the latter is more powerful of course.
+
+If you happen to have a value you want to print inside a simple scalar
+variable, instead of:
+
+   [% print $variable; %]
+
+you can also you the short form:
+
+  [% $variable %]
+
+Note: only the scalar variable name, nothing else apart optional spaces.
 
 If you know Perl, you should not have problems using the control structures.
 Just intersperse the code with the templates as you would normally do
