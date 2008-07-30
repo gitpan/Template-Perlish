@@ -1,6 +1,6 @@
 package Template::Perlish;
 
-$VERSION = '1.02';
+$VERSION = '1.03';
 
 use 5.008_000;
 use warnings;
@@ -67,6 +67,9 @@ sub compile {
       elsif (my ($scalar) = $code =~ m{\A\s* (\$ [a-zA-Z_]\w*) \s*\z}mxs) {
          $compiled .= "\nprint {*STDOUT} $scalar; ### straight scalar\n\n";
       }
+      elsif (substr($code, 0, 1) eq '=') {
+         $compiled .= _expression(substr $code, 1);
+      }
       else {
          $compiled .= $code;
       }
@@ -132,12 +135,26 @@ sub _variable {
          last;
       }
    }
-   \$value = '' unless defined \$value;
-   print {*STDOUT} \$value;
+   print {*STDOUT} \$value if defined \$value;
 }
 
 END_OF_CHUNK
 } ## end sub _variable
+
+sub _expression {
+   my $expression = shift;
+   return <<"END_OF_CHUNK";
+# Expression to be evaluated and printed out
+{
+   my \$value = do {{
+$expression
+   }};
+   print {*STDOUT} \$value if defined \$value;
+}
+
+END_OF_CHUNK
+
+}
 
 1;    # Magic true value required at end of module
 __END__
@@ -148,7 +165,7 @@ Template::Perlish - Yet Another Templating system for Perl
 
 =head1 VERSION
 
-This document describes Template::Perlish version 1.02. Most likely, this
+This document describes Template::Perlish version 1.03. Most likely, this
 version number here is outdate, and you should peek the source.
 
 
@@ -165,9 +182,10 @@ version number here is outdate, and you should peek the source.
       we are pleased to present you the following items:
    [%
       my $items = $variables{items}; # Available %variables
+      my $counter = 0;
       for my $item (@$items) {
    %]
-      * [% $item %]
+      [%= ++$counter %]. [% $item %]
    [%
       }
    %]
@@ -198,10 +216,10 @@ The above prints:
    
       we are pleased to present you the following items:
    
-      * ciao
-      * a
-      * tutti
-      * quanti
+      1. ciao
+      2. a
+      3. tutti
+      4. quanti
    
    Please consult our complete catalog at http://whateeeeever/.
    
@@ -227,34 +245,56 @@ As a summary:
 
 =item PRO
 
+=over
+
+=item *
+
 lightweight, a single-file module with minimal requirements that you
 can easily embed in your script;
 
-=item PRO
+=item *
 
-simple approach to variable substitution, following Template::Toolkit
+simple approach to variable substitution, following 
+L<Template::Toolkit|Template::Toolkit>
 to cope with scalars, hashes and arrays;
+
+=back
 
 =item PRO/CON
 
+=over
+
+=item *
+
 Perl code to handle all logic. This can be regarded as a PRO if you're
 a Perl programmer, because you already know the syntax; this is
-definitively a CON in all other cases, probably;
+probably (definitively?) a CON in all other cases;
+
+=back
 
 =item CON
+
+=over
+
+=item *
 
 you have to explicitly code everything that goes beyond simple variable
 stuffing into a template.
 
 =back
 
+=back
+
 If you think that this module does not fit your requirements,
-my personal suggestion for a template system is L<Template::Toolkit>: 
+my personal suggestion for a templating system is
+L<Template::Toolkit|Template::Toolkit>: 
 it's complete, easy to use and extensible, has excellent documentation 
 (including a book and a quick reference guide) and support. Do you need 
-anything more? But don't trust me! Take a look at
+anything more?
+
+But don't trust me! Take a look at I<Choosing a Templating System> at
 L<http://perl.apache.org/docs/tutorials/tmpl/comparison/comparison.html>,
-where you can find a fairly complete comparison about the "streamline"
+where you can find a fairly complete comparison about the I<streamline>
 templating systems in Perl, and decide by yourself!
 
 =head1 DESCRIPTION
@@ -279,7 +319,7 @@ I<command>, and treated specially. All the rest is treated as simple
 text. Of course, you can modify the start and stop delimiter for a
 command.
 
-I<Commands> can be of three different types:
+I<Commands> can be of four different types:
 
 =over
 
@@ -294,7 +334,13 @@ remember to use numbers ;)
 
 =item B<scalar Perl variable>
 
-that is expanded with the value of the given scalar variable
+that is expanded with the value of the given scalar variable;
+
+=item B<Perl expression>
+
+this MUST have a C<=> equal sign immediately after the opener, and
+contain a valid Perl expression. This expression is evaluated
+in scalar context and the result is printed;
 
 =item B<code>
 
@@ -304,7 +350,7 @@ it's also why this module is called C<Perlish>.
 
 =back
 
-Take a look at the example in the L<SYNOPSIS>, it actually contains all
+Take a look at the example in the L</SYNOPSIS>, it actually contains all
 that this module provides.
 
 To start, you'll need a C<Template::Perlish> object and, of course, a
@@ -317,7 +363,7 @@ files, you are in charge of loading them first.
    # get the template (yes, it's your duty)
    my $tmpl = do { open my $fh, '<', 'filename'; local $/; <$fh> };
 
-The basic operation mode is via the L<process()> method, which works much
+The basic operation mode is via the L</process> method, which works much
 like in TT2. Anyway, this method will always give you back the generated
 stuff, and won't print anything. This can probably be less memory
 efficient when big templates are involved, but in this case you should
@@ -338,9 +384,9 @@ on the same template many times, a typical usage is:
       print {*STDOUT} "DATASET\n", $tp->evaluate($compiled, $dataset), "\n\n";
    }
 
-Anyway, there's a drawback in this approach: each time L<evaluate()> is
+Anyway, there's a drawback in this approach: each time L</evaluate> is
 called, the code in the string C<$compiled> is C<exec>'ed as a string,
-thus involving Perl parsing etc. In this case, the L<compile_as_sub()>
+thus involving Perl parsing etc. In this case, the L</compile_as_sub>
 method can come handy:
 
    my $sub = $tp->compile_as_sub($template)
@@ -363,27 +409,28 @@ needed.
 
 =over
 
-=item B<< new(%opts) >>
+=item B<new>
 
-=item B<< new(\%opts) >>
+   $tp = Template::Perlish->new(%opts); # OR
+   $tp = Template::Perlish->new(\%opts);
 
 constructor, does exactly what you think. You can provide any parameter,
 but only the following will make sense:
 
 =over
 
-=item I<< start >>
+=item I<start>
 
 delimiter for the start of a I<command> (as opposed to plain text/data);
 
-=item I<< stop >>
+=item I<stop>
 
 delimiter for the end of a I<command>;
 
-=item I<< variables >>
+=item I<variables>
 
-variables that will be passed to all invocations of L<process()> and/or
-L<evaluate()>.
+variables that will be passed to all invocations of L</process> and/or
+L</evaluate>.
 
 =back
 
@@ -401,7 +448,9 @@ elements are the ones described above. You can modify them at will.
 
 =over
 
-=item B<< compile($template) >>
+=item B<compile>
+
+   $code_text = $tp->compile($template);
 
 compile a template generating the relevant Perl code. Using this method
 is useful when the same template has to be used multiple times, so the
@@ -412,9 +461,11 @@ use it, of course.
 
 Returns a text containing Perl code.
 
-=item B<< compile_as_sub($template)  >>
+=item B<compile_as_sub>
 
-Much like L<compile()>, this method does exactly the same compilation,
+   $sub_reference = $tp->compile_as_sub($template);
+
+Much like L</compile>, this method does exactly the same compilation,
 but returns a reference to an anonymous subroutine that can be used
 each time you want to "explode" the template. This has the advantage
 that you immediately know if your template compiles good (otherwise
@@ -427,28 +478,30 @@ The anonymous sub that is returned accepts a single, optional parameter,
 namely a reference to a hash of variables to be used in addition to the
 "streamline" ones.
 
-Note that if you add/change/remove values using the C<variables> accessor
+Note that if you add/change/remove values using the C<variables> member
 of the Template::Perlish object, these changes will reflect on the
 anonymous sub, so you end up using different values in two subsequent
 invocations of the sub. This is consistent with the behaviuor of the
-L<evaluate()> method.
+L</evaluate> method.
 
-=item B<< evaluate($compiled) >>
+=item B<evaluate>
 
-=item B<< evaluate($compiled, \%variables) >>
+   $final_text = $tp->evaluate($compiled); # OR
+   $final_text = $tp->evaluate($compiled, \%variables);
 
-evaluate a template (in its compiled for, see L<compile()>) with the
+evaluate a template (in its compiled for, see L</compile>) with the
 available variables. In the former form, only the already configured
 variables are used; in the latter, the given C<$variables> (which is
 a hash reference) are added, overriding any matching key.
 
 Returns the processed text as a string.
 
-=item B<< process($template) >>
+=item B<process>
 
-=item B<< process($template, $variables) >>
+   $final_text = $tp->process($template); # OR
+   $final_text = $tp->process($template, $variables);
 
-this method included L<compile()> and L<evaluate()> into a single step.
+this method included L</compile> and L</evaluate> into a single step.
 
 =back
 
@@ -484,6 +537,16 @@ you can also you the short form:
   [% $variable %]
 
 Note: only the scalar variable name, nothing else apart optional spaces.
+If you have something fancier, i.e. a Perl expression, you can use a
+shortcut to evaluate it and print all in one single command:
+
+  [%= my $value = 100; "*** $variable -> $value ***" %]
+
+Note that there is an equal sign (C<">) immediately after the command
+opener C<[%>. The Perl expression is evaluated in scalar context, and
+the result is printed (if defined, otherwise it's skipped). This sort
+of makes the previous short form for simple scalars a bit outdated,
+but you spare a character in any case and it's just DWIM.
 
 If you know Perl, you should not have problems using the control structures.
 Just intersperse the code with the templates as you would normally do
@@ -535,7 +598,7 @@ prints:
 
 Another trick is to separate the two chars with an empty block:
 
-   here it comes [[%%]%
+   here it comes [[%%]% the delimiter
 
 Including the starter in the Perl code is not a problem, of course.
 
@@ -549,8 +612,9 @@ Unfortunately, the diagnostic is still quite poor.
 
 =item C<< open(): %s >>
 
-the only C<open()> is done to print stuff to a string. If you get this
-error, you're probably using a version of Perl that's too old.
+the only C<perlfunc/open> is done to print stuff to a string.
+If you get this error, you're probably using a version of Perl that's
+too old.
 
 =item C<< unclosed %s at position %d >>
 
@@ -582,6 +646,9 @@ Please report any bugs or feature requests through http://rt.cpan.org/
 
 Due to the fact that Perl code is embedded directly into the template,
 you have to take into consideration all the possible security implications.
+In particular, you should avoid taking templates from outside, because
+in this case you'll be evaluating Perl code that you haven't checked.
+CAVEAT EMPTOR.
 
 =head1 AUTHOR
 
@@ -593,11 +660,11 @@ Flavio Poletti  C<< <flavio [at] polettix [dot] it> >>
 Copyright (c) 2008, Flavio Poletti C<< <flavio [at] polettix [dot] it> >>. All rights reserved.
 
 This module is free software; you can redistribute it and/or
-modify it under the same terms as Perl itself. See L<perlartistic>
+modify it under the same terms as Perl 5.8.x itself. See L<perlartistic>
 and L<perlgpl>.
 
 Questo modulo è software libero: potete ridistribuirlo e/o
-modificarlo negli stessi termini di Perl stesso. Vedete anche
+modificarlo negli stessi termini di Perl 5.8.x stesso. Vedete anche
 L<perlartistic> e L<perlgpl>.
 
 
