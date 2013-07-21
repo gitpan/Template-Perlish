@@ -1,6 +1,6 @@
 package Template::Perlish;
 
-$VERSION = '1.05';
+$VERSION = '1.06';
 
 use 5.008_000;
 use warnings;
@@ -13,6 +13,7 @@ sub new {
    my $self = bless {
       start     => '[%',
       stop      => '%]',
+      utf8      => 1,
       variables => {},
      },
      shift;
@@ -31,8 +32,14 @@ sub evaluate {
 
    local *STDOUT;
    open STDOUT, '>', \my $buffer or croak "open(): $OS_ERROR";
+   binmode STDOUT, ':encoding(utf8)' if $self->{utf8};
    my %variables = (%{$self->{variables}}, %{$vars || {}});
    eval $compiled;
+   close STDOUT;
+   if ($self->{utf8}) {
+      require Encode;
+      $buffer = Encode::decode(utf8 => $buffer);
+   }
    return $buffer;
 } ## end sub evaluate
 
@@ -43,7 +50,8 @@ sub compile {
    my $starter = $self->{start};
    my $stopper = $self->{stop};
 
-   my $compiled = "print {*STDOUT} '';\n\n";
+   my $compiled = $self->{utf8} ? "use utf8;\n\n" : '';
+   $compiled .= "print {*STDOUT} '';\n\n";
    my $pos      = 0;
    while ($pos < length $template) {
 
@@ -176,12 +184,18 @@ sub import {
 
 sub render {
    my $template = shift;
-   my %variables = ref($_[0]) ? %{$_[0]} : @_;
-   return __PACKAGE__->new()->process($template, \%variables);
+   my (%variables, %params);
+   if (@_) {
+      %variables = ref($_[0]) ? %{shift @_} : splice @_, 0;
+      %params = %{shift @_} if @_;
+   }
+   return __PACKAGE__->new(%params)->process($template, \%variables);
 }
 
 1;    # Magic true value required at end of module
 __END__
+
+=encoding iso-8859-1
 
 =head1 NAME
 
@@ -189,7 +203,7 @@ Template::Perlish - Yet Another Templating system for Perl
 
 =head1 VERSION
 
-This document describes Template::Perlish version 1.03. Most likely, this
+This document describes Template::Perlish version 1.06. Most likely, this
 version number here is outdate, and you should peek the source.
 
 
@@ -781,5 +795,12 @@ considerare un software, o ancora al modo in cui avete sempre trattato
 software di terze parti, non usatelo. Se lo usate, accettate espressamente
 questa negazione di garanzia e la piena responsabilità per qualsiasi
 tipo di danno, di qualsiasi natura, possa derivarne.
+
+=head1 SEE ALSO
+
+The best templating system in the world is undoubtfully L<Template::Toolkit>.
+
+See L<http://perl.apache.org/docs/tutorials/tmpl/comparison/comparison.html>
+for a comparison (and a fairly complete list) of different templating modules.
 
 =cut

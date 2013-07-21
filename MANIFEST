@@ -21,3 +21,4 @@ script/generate-standalone
 script/README
 script/tptree
 META.yml
+META.json                                Module JSON meta-data (added by MakeMaker)
